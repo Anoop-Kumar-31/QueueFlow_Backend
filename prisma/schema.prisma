@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id         String   @id @default(uuid())
+  name       String
+  email      String   @unique
+  password   String
+  role       Role     @default(CLIENT)
+  created_at DateTime @default(now())
+
+  // Relations
+  projects_created Project[]       @relation("CreatedProjects")
+  memberships      ProjectMember[]
+  tasks_assigned   Task[]          @relation("AssignedTasks")
+  invites_created  ProjectInvite[] @relation("CreatedInvites")
+  activities       ActivityEvent[]
+}
+
+enum Role {
+  PM
+  DEVELOPER
+  CLIENT
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  created_by  String
+  created_at  DateTime @default(now())
+
+  // Relations
+  creator User            @relation("CreatedProjects", fields: [created_by], references: [id])
+  members ProjectMember[]
+  tasks   Task[]
+  invites ProjectInvite[]
+  activities ActivityEvent[]
+}
+
+model ProjectMember {
+  id         String @id @default(uuid())
+  user_id    String
+  project_id String
+  role       Role
+
+  // Relations
+  user    User    @relation(fields: [user_id], references: [id])
+  project Project @relation(fields: [project_id], references: [id])
+
+  @@unique([user_id, project_id]) // A user can only have one role per project
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  title        String
+  description  String?
+  status       TaskStatus @default(PENDING)
+  assigned_to  String
+  project_id   String
+  priority     Int        @default(0)
+  position     Int        @default(0)
+  started_at   DateTime?
+  completed_at DateTime?
+  created_at   DateTime   @default(now())
+
+  // Relations
+  assignee User    @relation("AssignedTasks", fields: [assigned_to], references: [id], onDelete: Cascade)
+  project  Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  activities ActivityEvent[]
+}
+
+model ProjectInvite {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  project_id String
+  created_by String
+  expires_at DateTime
+  created_at DateTime @default(now())
+  
+  // Relations
+  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  creator    User     @relation("CreatedInvites", fields: [created_by], references: [id], onDelete: Cascade)
+}
+
+model ActivityEvent {
+  id         String   @id @default(uuid())
+  project_id String
+  task_id    String?  
+  user_id    String
+  action     String
+  details    String
+  created_at DateTime @default(now())
+  
+  // Relations
+  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  task       Task?    @relation(fields: [task_id],    references: [id], onDelete: SetNull)
+  user       User     @relation(fields: [user_id],    references: [id], onDelete: Cascade)
+}

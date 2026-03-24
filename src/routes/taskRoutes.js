@@ -6,7 +6,10 @@ import {
   getUserQueue, 
   reorderTasks, 
   updateTask, 
-  deleteTask 
+  deleteTask,
+  addStickyNote,
+  updateStickyNote,
+  deleteStickyNote
 } from '../controllers/taskController.js';
 
 const router = express.Router();
@@ -19,5 +22,9 @@ router.get('/queue/:userId', verifyToken, getUserQueue);
 
 router.put('/:taskId', verifyToken, updateTask);
 router.delete('/:taskId', verifyToken, requireRole(['PM']), deleteTask);
+
+router.post('/:taskId/notes', verifyToken, addStickyNote);
+router.put('/notes/:noteId', verifyToken, updateStickyNote);
+router.delete('/notes/:noteId', verifyToken, deleteStickyNote);
 
 export default router;

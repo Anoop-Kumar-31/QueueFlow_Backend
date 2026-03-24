@@ -22,6 +22,7 @@ model User {
   tasks_assigned   Task[]          @relation("AssignedTasks")
   invites_created  ProjectInvite[] @relation("CreatedInvites")
   activities       ActivityEvent[]
+  sticky_notes     StickyNote[]
 }
 
 enum Role {
@@ -82,6 +83,7 @@ model Task {
   assignee User    @relation("AssignedTasks", fields: [assigned_to], references: [id], onDelete: Cascade)
   project  Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
   activities ActivityEvent[]
+  sticky_notes StickyNote[]
 }
 
 model ProjectInvite {
@@ -110,4 +112,16 @@ model ActivityEvent {
   project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
   task       Task?    @relation(fields: [task_id],    references: [id], onDelete: SetNull)
   user       User     @relation(fields: [user_id],    references: [id], onDelete: Cascade)
+}
+
+model StickyNote {
+  id         String   @id @default(uuid())
+  text       String
+  task_id    String
+  user_id    String
+  created_at DateTime @default(now())
+
+  // Relations
+  task       Task     @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  author     User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }

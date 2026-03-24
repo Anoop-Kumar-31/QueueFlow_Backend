@@ -1,4 +1,5 @@
 import { prisma } from '../utils/prismaClient.js';
+import { getIO } from '../socket.js';
 
 export const createProject = async (req, res) => {
   try {
@@ -25,6 +26,19 @@ export const createProject = async (req, res) => {
         role: 'PM'
       }
     });
+
+    const activity = await prisma.activityEvent.create({
+      data: {
+        project_id: newProject.id,
+        user_id: req.user.id,
+        action: 'CREATED_PROJECT',
+        details: `Created project '${newProject.name}'`
+      },
+      include: { user: { select: { name: true } } }
+    });
+
+    const io = getIO();
+    io.to(newProject.id).emit('new_activity', activity);
 
     res.status(201).json({ success: true, data: newProject, message: 'Project created successfully' });
   } catch (error) {
@@ -244,7 +258,50 @@ export const inviteUser = async (req, res) => {
 
     res.status(200).json({ success: true, data: newMember, message: 'User added to project successfully' });
   } catch (error) {
-    console.error('Invite user error:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const removeProjectMember = async (req, res) => {
+  try {
+    const { id, userId } = req.params;
+
+    const member = await prisma.projectMember.findUnique({
+      where: { user_id_project_id: { user_id: userId, project_id: id } }
+    });
+
+    if (!member) return res.status(404).json({ message: 'Member not found in project' });
+
+    if (req.user.id !== userId && req.user.role !== 'PM') {
+      return res.status(403).json({ message: 'Only PMs can remove other users' });
+    }
+
+    await prisma.projectMember.delete({
+      where: { user_id_project_id: { user_id: userId, project_id: id } }
+    });
+
+    const actionText = req.user.id === userId ? 'LEFT_PROJECT' : 'REMOVED_MEMBER';
+    const removedUser = await prisma.user.findUnique({ where: { id: userId } });
+    const detailText = req.user.id === userId ? `Left the workspace` : `Removed member '${removedUser.name}'`;
+
+    const activity = await prisma.activityEvent.create({
+      data: {
+        project_id: id,
+        user_id: req.user.id,
+        action: actionText,
+        details: detailText
+      },
+      include: { user: { select: { name: true } } }
+    });
+
+    import('../socket.js').then(({ getIO }) => {
+      getIO().to(id).emit('new_activity', activity);
+    });
+
+    return res.json({ message: 'Member removed successfully' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
   }
 };

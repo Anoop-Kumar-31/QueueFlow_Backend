@@ -1,5 +1,5 @@
 import express from 'express';
-import { createProject, getUserProjects, getProjectDetails, inviteUser, getProjectMembers, generateInviteCode, joinProjectWithCode, getProjectActivities } from '../controllers/projectController.js';
+import { createProject, getUserProjects, getProjectDetails, inviteUser, getProjectMembers, generateInviteCode, joinProjectWithCode, getProjectActivities, removeProjectMember } from '../controllers/projectController.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -14,5 +14,6 @@ router.get('/:id/members', getProjectMembers);
 router.get('/:id/activities', getProjectActivities);
 router.post('/:id/generate-invite', requireRole(['PM']), generateInviteCode);
 router.post('/:id/invite', requireRole(['PM']), inviteUser);
+router.delete('/:id/members/:userId', verifyToken, removeProjectMember);
 
 export default router;

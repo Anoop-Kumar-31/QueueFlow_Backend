@@ -70,7 +70,11 @@ export const getProjectTasks = async (req, res) => {
     const tasks = await prisma.task.findMany({
       where: { project_id: projectId },
       include: {
-        assignee: { select: { id: true, name: true, email: true } }
+        assignee: { select: { id: true, name: true, email: true } },
+        sticky_notes: {
+          include: { author: { select: { name: true } } },
+          orderBy: { created_at: 'asc' }
+        }
       },
       orderBy: { created_at: 'desc' }
     });
@@ -220,6 +224,128 @@ export const deleteTask = async (req, res) => {
     io.to(task.project_id).emit('new_activity', activity);
 
     return res.json({ message: 'Task deleted successfully' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Add a sticky note to a task (All Roles)
+export const addStickyNote = async (req, res) => {
+  console.log("addStickyNote");
+  try {
+    const { taskId } = req.params;
+    const { text } = req.body;
+
+    if (!text || text.trim() === '') {
+      return res.status(400).json({ message: 'Note text is required' });
+    }
+
+    const task = await prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+
+    const note = await prisma.stickyNote.create({
+      data: {
+        text,
+        task_id: taskId,
+        user_id: req.user.id
+      },
+      include: { author: { select: { name: true } } }
+    });
+
+    const activity = await prisma.activityEvent.create({
+      data: {
+        project_id: task.project_id,
+        task_id: task.id,
+        user_id: req.user.id,
+        action: 'ADDED_NOTE',
+        details: `Added a sticky note to task '${task.title}'`
+      },
+      include: { user: { select: { name: true } } }
+    });
+
+    const io = getIO();
+    io.to(task.project_id).emit('new_sticky_note', note);
+    io.to(task.project_id).emit('new_activity', activity);
+
+    return res.status(201).json(note);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Update a sticky note
+export const updateStickyNote = async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const { text } = req.body;
+
+    const note = await prisma.stickyNote.findUnique({ where: { id: noteId }, include: { task: true } });
+    if (!note) return res.status(404).json({ message: 'Note not found' });
+
+    if (note.user_id !== req.user.id) {
+      return res.status(403).json({ message: 'You can only edit your own notes' });
+    }
+
+    const updatedNote = await prisma.stickyNote.update({
+      where: { id: noteId },
+      data: { text },
+      include: { author: { select: { name: true } } }
+    });
+
+    const activity = await prisma.activityEvent.create({
+      data: {
+        project_id: note.task.project_id,
+        task_id: note.task.id,
+        user_id: req.user.id,
+        action: 'UPDATED_NOTE',
+        details: `Updated a sticky note on task '${note.task.title}'`
+      },
+      include: { user: { select: { name: true } } }
+    });
+
+    const io = getIO();
+    io.to(note.task.project_id).emit('note_updated', updatedNote);
+    io.to(note.task.project_id).emit('new_activity', activity);
+
+    return res.json(updatedNote);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Delete a sticky note
+export const deleteStickyNote = async (req, res) => {
+  try {
+    const { noteId } = req.params;
+
+    const note = await prisma.stickyNote.findUnique({ where: { id: noteId }, include: { task: true } });
+    if (!note) return res.status(404).json({ message: 'Note not found' });
+
+    if (note.user_id !== req.user.id) {
+      return res.status(403).json({ message: 'You can only delete your own notes' });
+    }
+
+    await prisma.stickyNote.delete({ where: { id: noteId } });
+
+    const activity = await prisma.activityEvent.create({
+      data: {
+        project_id: note.task.project_id,
+        task_id: note.task.id,
+        user_id: req.user.id,
+        action: 'DELETED_NOTE',
+        details: `Deleted a sticky note from task '${note.task.title}'`
+      },
+      include: { user: { select: { name: true } } }
+    });
+
+    const io = getIO();
+    io.to(note.task.project_id).emit('note_deleted', { noteId, taskId: note.task_id });
+    io.to(note.task.project_id).emit('new_activity', activity);
+
+    return res.json({ message: 'Note deleted' });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: 'Internal server error' });

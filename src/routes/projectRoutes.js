@@ -1,5 +1,6 @@
 import express from 'express';
 import { createProject, getUserProjects, getProjectDetails, inviteUser, getProjectMembers, generateInviteCode, joinProjectWithCode, getProjectActivities, removeProjectMember } from '../controllers/projectController.js';
+import { getProjectAnalytics } from '../controllers/analyticsController.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -10,6 +11,7 @@ router.post('/join', joinProjectWithCode);
 router.post('/', requireRole(['PM']), createProject);
 router.get('/', getUserProjects);
 router.get('/:id', getProjectDetails);
+router.get('/:projectId/analytics', getProjectAnalytics);
 router.get('/:id/members', getProjectMembers);
 router.get('/:id/activities', getProjectActivities);
 router.post('/:id/generate-invite', requireRole(['PM']), generateInviteCode);

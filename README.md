@@ -29,7 +29,7 @@ This repository powers the backend infrastructure behind **QueueFlow**, a high-p
 
 ## 🗄️ Database Schema & Relations
 
-![Database ER Diagram](./screenshots/ER.png)
+![Database ER Diagram](./screenshots/ER_NEW.png)
 
 The backend is strictly typed and managed using Prisma. Below is a high-level overview of our core tables and how they structurally map the relational QueueFlow ecosystem:
 
@@ -37,6 +37,7 @@ The backend is strictly typed and managed using Prisma. Below is a high-level ov
   * *One-to-Many* ➔ `Project` (A PM creates many Projects).
   * *One-to-Many* ➔ `ProjectMember` (A user can join many workspaces).
   * *One-to-Many* ➔ `Task` (A user is assigned multiple workload items).
+  * *One-to-Many* ➔ `StickyNote` (A user can leave multiple comments).
 
 * **`Project` (Table)**: Represents an isolated Workspace initialized natively by a Project Manager.
   * *One-to-Many* ➔ `ProjectMember` (Manages who securely has access to the workspace).
@@ -49,6 +50,7 @@ The backend is strictly typed and managed using Prisma. Below is a high-level ov
 * **`Task` (Table)**: Granular workload rows tracking agile assignments. Contains state (`status`), structural queue order (`position`), and analytical timestamps (`started_at`, `completed_at`). 
   * *Many-to-One* ➔ `User` (The Developer Assigned).
   * *Many-to-One* ➔ `Project` (The target Workspace).
+  * *One-to-Many* ➔ `StickyNote` (A task can contain formal feedback).
 
 * **`ProjectInvite` (Table)**: Temporary cryptographic keys allowing users to bypass manual PM assignments securely natively. 
   * Features a strict `expires_at` column actively evaluated mitigating unauthorized onboardings. 
@@ -56,6 +58,10 @@ The backend is strictly typed and managed using Prisma. Below is a high-level ov
 * **`ActivityEvent` (Table)**: Permanent immutable telemetry tracking strings tracing exact granular actions chronologically (e.g. `MOVED_TASK`).
   * *Many-to-One* ➔ `User` (The explicit actor who executed the change).
   * *Many-to-One* ➔ `Task` (Optional reference mapping directly back to the modified Task!).
+
+* **`StickyNote` (Table)**: Client collaboration layer mapping specialized formal visual feedback exclusively tracked via bidirectional isolated WebSocket structures natively smoothly to specific exact DOM components safely.
+  * *Many-to-One* ➔ `Task` (The target structural grid scope).
+  * *Many-to-One* ➔ `User` (The precise author ID mapping formally backward).
 
 ---
 

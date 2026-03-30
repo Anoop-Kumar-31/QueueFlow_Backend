@@ -13,7 +13,7 @@ export const getProjectAnalytics = async (req, res) => {
       }),
       prisma.projectMember.findMany({
         where: { project_id: projectId },
-        include: { user: { select: { id: true, name: true, role: true } } }
+        include: { user: { select: { id: true, name: true } } }
       }),
       prisma.stickyNote.findMany({
         where: { task: { project_id: projectId } },
@@ -46,15 +46,15 @@ export const getProjectAnalytics = async (req, res) => {
     const completedWithTime = doneTasks.filter(t => t.started_at && t.completed_at);
     const avgCompletionHours = completedWithTime.length > 0
       ? Math.round(completedWithTime.reduce((sum, t) => {
-          return sum + (new Date(t.completed_at) - new Date(t.started_at)) / 3600000;
-        }, 0) / completedWithTime.length)
+        return sum + (new Date(t.completed_at) - new Date(t.started_at)) / 3600000;
+      }, 0) / completedWithTime.length)
       : null;
 
     // --- Priority Breakdown ---
     const priorityBreakdown = [
-      { name: 'High',   value: tasks.filter(t => t.priority === 1).length, color: '#ef4444' },
+      { name: 'High', value: tasks.filter(t => t.priority === 1).length, color: '#ef4444' },
       { name: 'Medium', value: tasks.filter(t => t.priority === 2).length, color: '#f59e0b' },
-      { name: 'Low',    value: tasks.filter(t => t.priority === 3).length, color: '#22c55e' },
+      { name: 'Low', value: tasks.filter(t => t.priority === 3).length, color: '#22c55e' },
     ].filter(p => p.value > 0);
 
     // --- In-Progress task chips ---

@@ -7,7 +7,7 @@ import { prisma } from '../utils/prismaClient.js';
 export const checkProjectRole = (allowedRoles) => {
   return async (req, res, next) => {
     try {
-      const { projectId } = req.params;
+      const projectId = req.params.projectId || req.params.id;
       const userId = req.user.id;
 
       if (!projectId) {

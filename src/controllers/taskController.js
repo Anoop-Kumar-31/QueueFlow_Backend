@@ -35,7 +35,7 @@ export const createTask = async (req, res) => {
         description,
         assigned_to,
         project_id: projectId,
-        priority: priority || 0,
+        priority: parseInt(priority) || 0,
         position: newPosition
       }
     });
@@ -169,7 +169,7 @@ export const updateTask = async (req, res) => {
     });
 
     if (!membership) return res.status(403).json({ message: 'Not a member of this project' });
-    
+
     if (membership.role === 'DEVELOPER' && existingTask.assigned_to !== req.user.id) {
       return res.status(403).json({ message: 'You can only update your own assigned tasks' });
     }

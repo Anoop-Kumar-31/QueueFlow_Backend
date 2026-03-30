@@ -57,6 +57,13 @@ export const getUserProjects = async (req, res) => {
           include: {
             creator: {
               select: { name: true }
+            },
+            members: {
+              include: {
+                user: {
+                  select: { name: true, }
+                }
+              }
             }
           }
         }
@@ -146,8 +153,9 @@ export const generateInviteCode = async (req, res) => {
 };
 
 export const joinProjectWithCode = async (req, res) => {
+  console.log("Joining the project...")
   try {
-    const { code } = req.body;
+    const { code, role } = req.body;
 
     if (!code) return res.status(400).json({ success: false, message: 'Invite code required' });
 
@@ -157,6 +165,11 @@ export const joinProjectWithCode = async (req, res) => {
     });
 
     if (!invite) return res.status(404).json({ success: false, message: 'Invalid invite code' });
+    if (!role) return res.status(400).json({ success: false, message: 'Role is required' });
+
+    if (role?.toUpperCase() !== 'DEVELOPER' && role?.toUpperCase() !== 'CLIENT') {
+      return res.status(400).json({ success: false, message: 'Invalid role' });
+    }
 
     if (new Date() > invite.expires_at) {
       return res.status(400).json({ success: false, message: 'This invite code has expired. Please ask your PM for a new one.' });
@@ -172,7 +185,7 @@ export const joinProjectWithCode = async (req, res) => {
       data: {
         user_id: req.user.id,
         project_id: invite.project_id,
-        role: 'DEVELOPER'
+        role: role?.toUpperCase()
       }
     });
 
@@ -222,7 +235,7 @@ export const getProjectMembers = async (req, res) => {
     const members = await prisma.projectMember.findMany({
       where: { project_id: id },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } }
+        user: { select: { id: true, name: true, email: true } }
       }
     });
     res.json({ success: true, data: members });

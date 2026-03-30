@@ -1,12 +1,12 @@
 import express from 'express';
 import { verifyToken } from '../middleware/authMiddleware.js';
 import { checkProjectRole } from '../middleware/projectAuth.js';
-import { 
-  createTask, 
-  getProjectTasks, 
-  getUserQueue, 
-  reorderTasks, 
-  updateTask, 
+import {
+  createTask,
+  getProjectTasks,
+  getUserQueue,
+  reorderTasks,
+  updateTask,
   deleteTask,
   addStickyNote,
   updateStickyNote,

@@ -91,7 +91,7 @@ export const getProjectDetails = async (req, res) => {
       }
     });
 
-    if (!membership && req.user.role !== 'PM') {
+    if (!membership) {
       return res.status(403).json({ success: false, message: 'Access denied to this project' });
     }
 
@@ -273,8 +273,8 @@ export const removeProjectMember = async (req, res) => {
 
     if (!member) return res.status(404).json({ message: 'Member not found in project' });
 
-    if (req.user.id !== userId && req.user.role !== 'PM') {
-      return res.status(403).json({ message: 'Only PMs can remove other users' });
+    if (req.user.id !== userId && member.role !== 'PM') {
+      return res.status(403).json({ message: 'Only PMs of this project can remove other users' });
     }
 
     await prisma.projectMember.delete({

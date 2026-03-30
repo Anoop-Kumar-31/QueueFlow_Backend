@@ -91,8 +91,20 @@ export const getUserQueue = async (req, res) => {
     const { userId } = req.params;
 
     // optionally: users can only see their own queue or PMs can see any queue
-    if (req.user.id !== userId && req.user.role !== 'PM') {
-      return res.status(403).json({ message: 'Unauthorized to view this queue' });
+    // check if requester is PM in ANY project shared with target user
+    if (req.user.id !== userId) {
+      const pmCount = await prisma.projectMember.count({
+        where: {
+          role: 'PM',
+          user_id: req.user.id,
+          project: {
+            members: { some: { user_id: userId } }
+          }
+        }
+      });
+      if (pmCount === 0) {
+        return res.status(403).json({ message: 'Unauthorized to view this queue' });
+      }
     }
 
     const tasks = await prisma.task.findMany({
@@ -151,8 +163,14 @@ export const updateTask = async (req, res) => {
     const existingTask = await prisma.task.findUnique({ where: { id: taskId } });
     if (!existingTask) return res.status(404).json({ message: 'Task not found' });
 
-    // Enforce role boundaries: Developers can only update status/description of own tasks
-    if (req.user.role === 'DEVELOPER' && existingTask.assigned_to !== req.user.id) {
+    // Enforce role boundaries via membership
+    const membership = await prisma.projectMember.findUnique({
+      where: { user_id_project_id: { user_id: req.user.id, project_id: existingTask.project_id } }
+    });
+
+    if (!membership) return res.status(403).json({ message: 'Not a member of this project' });
+    
+    if (membership.role === 'DEVELOPER' && existingTask.assigned_to !== req.user.id) {
       return res.status(403).json({ message: 'You can only update your own assigned tasks' });
     }
 
@@ -205,6 +223,14 @@ export const deleteTask = async (req, res) => {
 
     const task = await prisma.task.findUnique({ where: { id: taskId } });
     if (!task) return res.status(404).json({ message: 'Not found' });
+
+    // Contextual PM Check
+    const membership = await prisma.projectMember.findUnique({
+      where: { user_id_project_id: { user_id: req.user.id, project_id: task.project_id } }
+    });
+    if (!membership || membership.role !== 'PM') {
+      return res.status(403).json({ message: "Only PMs of this project can delete tasks" });
+    }
 
     await prisma.task.delete({ where: { id: taskId } });
 

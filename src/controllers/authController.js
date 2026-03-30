@@ -17,21 +17,17 @@ export const register = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Default role to CLIENT if not provided or invalid
-    const userRole = role && ['PM', 'DEVELOPER', 'CLIENT'].includes(role) ? role : 'CLIENT';
-
     const newUser = await prisma.user.create({
       data: {
         name,
         email,
-        password: hashedPassword,
-        role: userRole
+        password: hashedPassword
       }
     });
 
     res.status(201).json({
       success: true,
-      data: { id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role },
+      data: { id: newUser.id, name: newUser.name, email: newUser.email },
       message: 'User registered successfully'
     });
   } catch (error) {
@@ -58,9 +54,9 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Sign the token indicating user info including role.
+    // Sign the token indicating user info (no global role)
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      { id: user.id },
       process.env.JWT_SECRET || 'fallback_secret',
       { expiresIn: '7d' }
     );
@@ -69,7 +65,7 @@ export const login = async (req, res) => {
       success: true,
       data: {
         token,
-        user: { id: user.id, name: user.name, email: user.email, role: user.role }
+        user: { id: user.id, name: user.name, email: user.email }
       },
       message: 'Logged in successfully'
     });
@@ -83,7 +79,7 @@ export const getMe = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, name: true, email: true, role: true, created_at: true }
+      select: { id: true, name: true, email: true, created_at: true }
     });
     
     if (!user) {

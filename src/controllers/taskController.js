@@ -37,6 +37,10 @@ export const createTask = async (req, res) => {
         project_id: projectId,
         priority: parseInt(priority) || 0,
         position: newPosition
+      },
+      // No sticky_notes included — fetched separately via GET /:taskId/notes
+      include: {
+        assignee: { select: { id: true, name: true, email: true } }
       }
     });
 
@@ -63,43 +67,72 @@ export const createTask = async (req, res) => {
   }
 };
 
-// Get all tasks for a project
+// Get all tasks for a project (paginated, no sticky_notes)
 export const getProjectTasks = async (req, res) => {
   try {
     const { projectId } = req.params;
-    const tasks = await prisma.task.findMany({
-      where: { project_id: projectId },
-      include: {
-        assignee: { select: { id: true, name: true, email: true } },
-        sticky_notes: {
-          include: { author: { select: { name: true } } },
-          orderBy: { created_at: 'asc' }
-        }
-      },
-      orderBy: { created_at: 'desc' }
+    const page  = Math.max(parseInt(req.query.page)  || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const skip  = (page - 1) * limit;
+
+    const [tasks, total] = await prisma.$transaction([
+      prisma.task.findMany({
+        where: { project_id: projectId },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          status: true,
+          priority: true,
+          position: true,
+          assigned_to: true,
+          project_id: true,
+          started_at: true,
+          completed_at: true,
+          created_at: true,
+          assignee: { select: { id: true, name: true, email: true } },
+          // sticky_notes intentionally omitted — use GET /:taskId/notes
+          _count: { select: { sticky_notes: true } }
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.task.count({ where: { project_id: projectId } })
+    ]);
+
+    return res.json({
+      success: true,
+      data: tasks,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total
+      }
     });
-    return res.json(tasks);
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
 
-// Get active queue for a specific developer
+// Get active queue for a specific developer (paginated, no sticky_notes)
 export const getUserQueue = async (req, res) => {
   try {
     const { userId } = req.params;
+    const page  = Math.max(parseInt(req.query.page)  || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const skip  = (page - 1) * limit;
 
-    // optionally: users can only see their own queue or PMs can see any queue
-    // check if requester is PM in ANY project shared with target user
+    // Users can only see their own queue; PMs can see any queue in a shared project
     if (req.user.id !== userId) {
       const pmCount = await prisma.projectMember.count({
         where: {
           role: 'PM',
           user_id: req.user.id,
-          project: {
-            members: { some: { user_id: userId } }
-          }
+          project: { members: { some: { user_id: userId } } }
         }
       });
       if (pmCount === 0) {
@@ -107,17 +140,97 @@ export const getUserQueue = async (req, res) => {
       }
     }
 
-    const tasks = await prisma.task.findMany({
-      where: {
-        assigned_to: userId,
-        // status: { not: 'DONE' } // queue only shows active tasks generally
-      },
-      include: {
-        project: { select: { id: true, name: true } }
-      },
-      orderBy: { position: 'asc' }
+    const [tasks, total] = await prisma.$transaction([
+      prisma.task.findMany({
+        where: { assigned_to: userId },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          status: true,
+          priority: true,
+          position: true,
+          assigned_to: true,
+          project_id: true,
+          started_at: true,
+          completed_at: true,
+          created_at: true,
+          project: { select: { id: true, name: true } },
+          _count: { select: { sticky_notes: true } }
+        },
+        orderBy: { position: 'asc' },
+        skip,
+        take: limit
+      }),
+      prisma.task.count({ where: { assigned_to: userId } })
+    ]);
+
+    return res.json({
+      success: true,
+      data: tasks,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total
+      }
     });
-    return res.json(tasks);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Fetch sticky notes for a specific task (nested resource, paginated)
+export const getTaskNotes = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const page  = Math.max(parseInt(req.query.page)  || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const skip  = (page - 1) * limit;
+
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { project_id: true }
+    });
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+
+    // Verify the requester is a member of the parent project
+    const membership = await prisma.projectMember.findUnique({
+      where: { user_id_project_id: { user_id: req.user.id, project_id: task.project_id } }
+    });
+    if (!membership) return res.status(403).json({ message: 'Not a member of this project' });
+
+    const [notes, total] = await prisma.$transaction([
+      prisma.stickyNote.findMany({
+        where: { task_id: taskId },
+        select: {
+          id: true,
+          text: true,
+          task_id: true,
+          user_id: true,
+          created_at: true,
+          author: { select: { name: true } }
+        },
+        orderBy: { created_at: 'asc' },
+        skip,
+        take: limit
+      }),
+      prisma.stickyNote.count({ where: { task_id: taskId } })
+    ]);
+
+    return res.json({
+      success: true,
+      data: notes,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total
+      }
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: 'Internal server error' });
@@ -188,7 +301,22 @@ export const updateTask = async (req, res) => {
 
     const updatedTask = await prisma.task.update({
       where: { id: taskId },
-      data: updateData
+      data: updateData,
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        status: true,
+        priority: true,
+        position: true,
+        assigned_to: true,
+        project_id: true,
+        started_at: true,
+        completed_at: true,
+        created_at: true,
+        assignee: { select: { id: true, name: true, email: true } },
+        _count: { select: { sticky_notes: true } }
+      }
     });
 
     const io = getIO();
@@ -258,7 +386,6 @@ export const deleteTask = async (req, res) => {
 
 // Add a sticky note to a task (All Roles)
 export const addStickyNote = async (req, res) => {
-  console.log("addStickyNote");
   try {
     const { taskId } = req.params;
     const { text } = req.body;
@@ -271,12 +398,15 @@ export const addStickyNote = async (req, res) => {
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
     const note = await prisma.stickyNote.create({
-      data: {
-        text,
-        task_id: taskId,
-        user_id: req.user.id
-      },
-      include: { author: { select: { name: true } } }
+      data: { text, task_id: taskId, user_id: req.user.id },
+      select: {
+        id: true,
+        text: true,
+        task_id: true,
+        user_id: true,
+        created_at: true,
+        author: { select: { name: true } }
+      }
     });
 
     const activity = await prisma.activityEvent.create({
@@ -317,7 +447,14 @@ export const updateStickyNote = async (req, res) => {
     const updatedNote = await prisma.stickyNote.update({
       where: { id: noteId },
       data: { text },
-      include: { author: { select: { name: true } } }
+      select: {
+        id: true,
+        text: true,
+        task_id: true,
+        user_id: true,
+        created_at: true,
+        author: { select: { name: true } }
+      }
     });
 
     const activity = await prisma.activityEvent.create({

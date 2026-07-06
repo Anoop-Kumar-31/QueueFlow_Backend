@@ -213,16 +213,39 @@ export const joinProjectWithCode = async (req, res) => {
 export const getProjectActivities = async (req, res) => {
   try {
     const { id } = req.params;
-    const activities = await prisma.activityEvent.findMany({
-      where: { project_id: id },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        task: { select: { id: true, title: true } }
-      },
-      orderBy: { created_at: 'desc' },
-      take: 50
+    const page  = Math.max(parseInt(req.query.page)  || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const skip  = (page - 1) * limit;
+
+    const [activities, total] = await prisma.$transaction([
+      prisma.activityEvent.findMany({
+        where: { project_id: id },
+        select: {
+          id: true,
+          action: true,
+          details: true,
+          created_at: true,
+          user: { select: { id: true, name: true } },
+          task: { select: { id: true, title: true } }
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.activityEvent.count({ where: { project_id: id } })
+    ]);
+
+    res.json({
+      success: true,
+      data: activities,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total
+      }
     });
-    res.json({ success: true, data: activities });
   } catch (error) {
     console.error('Get activities error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });

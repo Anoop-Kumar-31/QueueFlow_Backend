@@ -8,6 +8,12 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// User
+// Query patterns:
+//   • login              → WHERE email = ?          (unique already indexed)
+//   • verifyToken/getMe  → WHERE id = ?             (PK already indexed)
+// ─────────────────────────────────────────────────────────────────────────────
 model User {
   id         String   @id @default(uuid())
   name       String
@@ -23,8 +29,8 @@ model User {
   activities       ActivityEvent[]
   sticky_notes     StickyNote[]
 
-  @@index([id])
-  @@index([email])
+  // @@index([id]) — REMOVED: redundant, @id is already a unique B-tree index
+  // @@index([email]) — REMOVED: redundant, @unique already indexes email
 }
 
 enum Role {
@@ -33,6 +39,13 @@ enum Role {
   CLIENT
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Project
+// Query patterns:
+//   • getUserProjects   → through ProjectMember join
+//   • getProjectDetails → WHERE id = ?              (PK)
+//   • creator lookup    → WHERE created_by = ?
+// ─────────────────────────────────────────────────────────────────────────────
 model Project {
   id          String   @id @default(uuid())
   name        String
@@ -47,10 +60,20 @@ model Project {
   invites    ProjectInvite[]
   activities ActivityEvent[]
 
-  @@index([id])
-  @@index([created_by])
+  // @@index([id])         — REMOVED: redundant with @id
+  @@index([created_by])    // creator lookups & FK join
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ProjectMember
+// Query patterns:
+//   • getUserProjects          → WHERE user_id = ?
+//   • getProjectDetails (auth) → WHERE user_id = ? AND project_id = ?   (covered by @@unique)
+//   • getProjectMembers        → WHERE project_id = ?
+//   • checkProjectRole (hot middleware, runs on every PM route)
+//                              → WHERE user_id = ? AND project_id = ?   (covered by @@unique)
+//   • analytics workload       → WHERE project_id = ? (+ role filter)
+// ─────────────────────────────────────────────────────────────────────────────
 model ProjectMember {
   id         String @id @default(uuid())
   user_id    String
@@ -61,10 +84,11 @@ model ProjectMember {
   user    User    @relation(fields: [user_id], references: [id])
   project Project @relation(fields: [project_id], references: [id])
 
-  @@unique([user_id, project_id]) // A user can only have one role per project
-  @@index([id])
-  @@index([user_id])
-  @@index([project_id])
+  @@unique([user_id, project_id])   // also serves as a composite index for checkProjectRole
+  // @@index([id])         — REMOVED: redundant with @id
+  @@index([user_id])                // getUserProjects: WHERE user_id = ?
+  @@index([project_id])             // getProjectMembers: WHERE project_id = ?
+  @@index([project_id, role])       // checkProjectRole middleware + analytics: WHERE project_id = ? AND role = ?
 }
 
 enum TaskStatus {
@@ -74,6 +98,17 @@ enum TaskStatus {
   DONE
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Task  ← most queried model; needs the most attention
+// Query patterns:
+//   1. getProjectTasks   → WHERE project_id = ?  ORDER BY created_at DESC  + LIMIT/OFFSET
+//   2. getUserQueue      → WHERE assigned_to = ?  ORDER BY position ASC    + LIMIT/OFFSET
+//   3. analytics tasks   → WHERE project_id = ?  ORDER BY created_at ASC  (all tasks, no limit)
+//   4. analytics status  → WHERE project_id = ?  GROUP/FILTER by status
+//   5. createTask (max)  → WHERE assigned_to = ? AND status != 'DONE'  ORDER BY position DESC LIMIT 1
+//   6. deleteTask / updateTask → WHERE id = ?  (PK)
+//   7. count pagination  → COUNT WHERE project_id = ? / WHERE assigned_to = ?
+// ─────────────────────────────────────────────────────────────────────────────
 model Task {
   id           String     @id @default(uuid())
   title        String
@@ -93,13 +128,38 @@ model Task {
   activities   ActivityEvent[]
   sticky_notes StickyNote[]
 
-  @@index([id])
-  @@index([project_id])
+  // @@index([id])                        — REMOVED: redundant with @id
+
+  // Pattern 1 & 3 & 7: getProjectTasks / analytics / count
+  // Covers: WHERE project_id = ?  ORDER BY created_at DESC/ASC
+  // PostgreSQL can satisfy both WHERE and ORDER BY from a single index scan + optional reverse scan
+  @@index([project_id, created_at])
+
+  // Pattern 4: analytics status breakdown
+  // Covers: WHERE project_id = ? AND status = ?
+  // Also covers WHERE project_id = ? (leftmost prefix) for general project queries
+  @@index([project_id, status])
+
+  // Pattern 2 & 7: getUserQueue / count
+  // Covers: WHERE assigned_to = ?  ORDER BY position ASC
+  @@index([assigned_to, position])
+
+  // Pattern 5: createTask → find max position for a developer's active queue
+  // Covers: WHERE assigned_to = ? AND status != 'DONE'  ORDER BY position DESC
+  // The (assigned_to, status, position) composite lets Postgres filter assigned+status then scan position
+  @@index([assigned_to, status, position])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ProjectInvite
+// Query patterns:
+//   • joinProjectWithCode → WHERE code = ?         (@unique already indexed)
+//   • generateInviteCode  → INSERT only
+//   • expiry check        → WHERE expires_at < now() (for cleanup / validation)
+// ─────────────────────────────────────────────────────────────────────────────
 model ProjectInvite {
   id         String   @id @default(uuid())
-  code       String   @unique
+  code       String   @unique    // B-tree index already created by @unique
   project_id String
   created_by String
   expires_at DateTime
@@ -109,11 +169,20 @@ model ProjectInvite {
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
   creator User    @relation("CreatedInvites", fields: [created_by], references: [id], onDelete: Cascade)
 
-  @@index([id])
-  @@index([project_id])
-  @@index([created_by])
+  // @@index([id])         — REMOVED: redundant with @id
+  @@index([project_id])    // FK join
+  @@index([created_by])    // FK join
+  @@index([expires_at])    // expiry validation: WHERE expires_at < now()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ActivityEvent  ← had ZERO indexes — biggest latency offender
+// Query patterns:
+//   1. getProjectActivities → WHERE project_id = ?  ORDER BY created_at DESC  + LIMIT/OFFSET
+//   2. count pagination     → COUNT WHERE project_id = ?
+//   3. analytics            → WHERE project_id = ?  ORDER BY created_at DESC  LIMIT 100
+//   4. FK joins             → task_id, user_id lookups
+// ─────────────────────────────────────────────────────────────────────────────
 model ActivityEvent {
   id         String   @id @default(uuid())
   project_id String
@@ -127,8 +196,24 @@ model ActivityEvent {
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
   task    Task?   @relation(fields: [task_id], references: [id], onDelete: SetNull)
   user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  // Pattern 1, 2 & 3: the single most impactful index in the whole schema
+  // Covers: WHERE project_id = ?  ORDER BY created_at DESC  + COUNT
+  // Reduces getProjectActivities from full-table-scan to an index range scan
+  @@index([project_id, created_at])
+
+  @@index([task_id])    // FK join when task is included; nullable but still useful
+  @@index([user_id])    // FK join
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// StickyNote
+// Query patterns:
+//   1. getTaskNotes         → WHERE task_id = ?  ORDER BY created_at ASC  + LIMIT/OFFSET
+//   2. count (_count query) → COUNT WHERE task_id = ?
+//   3. analytics count      → WHERE task.project_id = ?  (via join, not direct filter)
+//   4. author lookup        → WHERE user_id = ?
+// ─────────────────────────────────────────────────────────────────────────────
 model StickyNote {
   id         String   @id @default(uuid())
   text       String
@@ -140,7 +225,8 @@ model StickyNote {
   task   Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
   author User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  @@index([id])
-  @@index([task_id])
-  @@index([user_id])
+  // @@index([id])               — REMOVED: redundant with @id
+  // Upgraded from @@index([task_id]) to composite — covers WHERE + ORDER BY in a single scan
+  @@index([task_id, created_at]) // getTaskNotes: WHERE task_id = ?  ORDER BY created_at ASC
+  @@index([user_id])             // author FK join + user note lookups
 }

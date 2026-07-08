@@ -55,6 +55,10 @@ cron.schedule('0 0 */5 * *', async () => {
 import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 import taskRoutes from './routes/taskRoutes.js';
+import { apiLimiter } from './middleware/rateLimiter.js';
+
+// Global rate limiter — 150 req/min per IP across all API routes
+app.use('/api', apiLimiter);
 
 // Routes
 app.use('/api/auth', authRoutes);

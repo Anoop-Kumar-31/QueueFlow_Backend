@@ -1,18 +1,34 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
 import { prisma } from '../utils/prismaClient.js';
+
+dotenv.config();
 
 // ─── Token helpers ────────────────────────────────────────────────────────────
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
+const getAccessSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is missing.');
+  }
+  return secret;
+};
+
+const getRefreshSecret = () => {
+  // Gracefully fallback to JWT_SECRET if REFRESH_TOKEN_SECRET hasn't been set in host environment yet
+  return process.env.REFRESH_TOKEN_SECRET || getAccessSecret();
+};
+
 /** Short-lived access token — lives in memory on the client only */
 const signAccessToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
+  jwt.sign({ id: userId }, getAccessSecret(), { expiresIn: '15m' });
 
 /** Long-lived refresh token — delivered via httpOnly cookie, never exposed to JS */
 const signRefreshToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '7d' });
+  jwt.sign({ id: userId }, getRefreshSecret(), { expiresIn: '7d' });
 
 /** Set the refresh token as a hardened httpOnly cookie */
 const setRefreshCookie = (res, token) => {
@@ -120,7 +136,7 @@ export const refresh = async (req, res) => {
 
     let payload;
     try {
-      payload = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET);
+      payload = jwt.verify(token, getRefreshSecret());
     } catch {
       clearRefreshCookie(res);
       return res.status(401).json({ success: false, message: 'Refresh token invalid or expired' });

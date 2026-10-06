@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import http from 'http';
 import { PrismaClient } from '@prisma/client';
@@ -18,12 +19,14 @@ initSocket(server);
 // Middleware
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true
+  credentials: true,             // allow cookies to be sent cross-origin
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json());
+app.use(cookieParser());          // parse Cookie header → req.cookies
 
 // Basic health check route
-app.get('/api/health', (req, res) => {
+app.get(['/health', '/api/health'], (req, res) => {
   res.status(200).json({ success: true, message: 'QueueFlow API is running' });
 });
 

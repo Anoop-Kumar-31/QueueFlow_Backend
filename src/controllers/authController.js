@@ -2,6 +2,41 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../utils/prismaClient.js';
 
+// ─── Token helpers ────────────────────────────────────────────────────────────
+
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+/** Short-lived access token — lives in memory on the client only */
+const signAccessToken = (userId) =>
+  jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
+
+/** Long-lived refresh token — delivered via httpOnly cookie, never exposed to JS */
+const signRefreshToken = (userId) =>
+  jwt.sign({ id: userId }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '7d' });
+
+/** Set the refresh token as a hardened httpOnly cookie */
+const setRefreshCookie = (res, token) => {
+  res.cookie('refreshToken', token, {
+    httpOnly: true,           // JS cannot read this at all
+    secure: IS_PROD,          // HTTPS-only in production; allow HTTP in dev
+    sameSite: IS_PROD ? 'Strict' : 'Lax', // CSRF protection
+    maxAge: 7 * 24 * 60 * 60 * 1000,      // 7 days in ms
+    path: '/api/auth',        // Cookie is only sent to /api/auth/* routes
+  });
+};
+
+/** Clear the refresh cookie on logout */
+const clearRefreshCookie = (res) => {
+  res.clearCookie('refreshToken', {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: IS_PROD ? 'Strict' : 'Lax',
+    path: '/api/auth',
+  });
+};
+
+// ─── Controllers ─────────────────────────────────────────────────────────────
+
 export const register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -18,11 +53,7 @@ export const register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword
-      }
+      data: { name, email, password: hashedPassword }
     });
 
     res.status(201).json({
@@ -54,16 +85,17 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    const token = jwt.sign(
-      { id: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const accessToken = signAccessToken(user.id);
+    const refreshToken = signRefreshToken(user.id);
 
+    // Refresh token → secure httpOnly cookie (invisible to JavaScript)
+    setRefreshCookie(res, refreshToken);
+
+    // Access token → response body (frontend keeps it in memory/Redux only)
     res.status(200).json({
       success: true,
       data: {
-        token,
+        token: accessToken,
         user: { id: user.id, name: user.name, email: user.email }
       },
       message: 'Logged in successfully'
@@ -72,6 +104,61 @@ export const login = async (req, res) => {
     console.error('Login error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
+};
+
+/**
+ * POST /api/auth/refresh
+ * Reads the httpOnly refreshToken cookie, verifies it, and returns a fresh
+ * access token + rotates the refresh token cookie.
+ */
+export const refresh = async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No refresh token' });
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET);
+    } catch {
+      clearRefreshCookie(res);
+      return res.status(401).json({ success: false, message: 'Refresh token invalid or expired' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: { id: true, name: true, email: true }
+    });
+
+    if (!user) {
+      clearRefreshCookie(res);
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    // Rotate: issue a new refresh token and access token
+    const newAccessToken = signAccessToken(user.id);
+    const newRefreshToken = signRefreshToken(user.id);
+    setRefreshCookie(res, newRefreshToken);
+
+    res.status(200).json({
+      success: true,
+      data: { token: newAccessToken, user }
+    });
+  } catch (error) {
+    console.error('Refresh error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+/**
+ * POST /api/auth/logout
+ * Clears the httpOnly refresh token cookie. The client should discard its
+ * in-memory access token.
+ */
+export const logout = async (req, res) => {
+  clearRefreshCookie(res);
+  res.status(200).json({ success: true, message: 'Logged out successfully' });
 };
 
 export const getMe = async (req, res) => {
@@ -117,7 +204,6 @@ export const updateProfile = async (req, res) => {
     const { name, email } = req.body;
     if (!name && !email) return res.status(400).json({ success: false, message: 'Nothing to update' });
 
-    // Prevent email collision with another user
     if (email) {
       const existing = await prisma.user.findUnique({ where: { email } });
       if (existing && existing.id !== req.user.id) {
